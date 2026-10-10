@@ -9,7 +9,8 @@ RUN test -f /usr/share/zoneinfo/Asia/Shanghai
 
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+ARG PIP_INDEX_URL=https://pypi.org/simple
+RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" -r requirements.txt
 COPY firewall.py ./
 RUN mkdir -p /app/log /banlogs
 
