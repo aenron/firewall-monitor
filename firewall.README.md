@@ -33,7 +33,7 @@ docker compose logs --tail=100 -f firewall-monitor
 
 Compose 自动通过 `env_file` 注入 `firewall.env`，无需执行 `source`。修改配置后执行 `docker compose up -d --force-recreate`；更新代码后执行 `docker compose up -d --build`。停止服务用 `docker compose down`，不会主动清除宿主机 fail2ban 的封禁集合。
 
-构建默认使用官方 PyPI。下载较慢时，可将 `PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` 写入项目 `.env`，再执行 `docker compose build`。此变量只用于构建，不属于 `firewall.env` 中的运行配置；`.env` 同样被 Git 忽略。
+构建默认使用官方 PyPI。下载较慢时，可将 `PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/` 写入项目 `.env`，再执行 `docker compose build`。此变量只用于构建，不属于 `firewall.env` 中的运行配置；`.env` 同样被 Git 忽略。
 
 封禁日志采用单文件绑定以兼容现有 jail。**该文件的 logrotate 必须使用 `copytruncate`，不要重命名后创建新文件**，否则容器仍会写旧 inode。如果需使用 rename/create 轮转，应改为共享专用日志目录，并同步调整宿主机 jail 的日志路径。应用日志目录 `./log` 持久化，应用与 Docker 控制台日志均有轮转限制。
 
