@@ -1,0 +1,14 @@
+firewall.env
+.env
+.env.*
+*.env
+*.env.*
+!firewall.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+log/
+__pycache__/
+*.pyc
+.venv/

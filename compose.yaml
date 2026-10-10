@@ -1,0 +1,43 @@
+name: firewall-monitor
+
+services:
+  firewall-monitor:
+    build:
+      context: .
+    image: firewall-monitor:local
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ./firewall.env
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      FIREWALL_BAN_LOG: /banlogs/firewall-ban.log
+      FIREWALL_LOG_DIR: /app/log
+      TZ: ${TZ:-Asia/Shanghai}
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIREWALL_HOST_BAN_LOG:-/var/log/firewall-ban.log}
+        target: /banlogs/firewall-ban.log
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./log
+        target: /app/log
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
