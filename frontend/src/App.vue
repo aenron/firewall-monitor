@@ -8,10 +8,15 @@ import {
   watch,
 } from "vue";
 import * as echarts from "echarts/core";
-import { MapChart, LineChart, BarChart } from "echarts/charts";
+import {
+  LinesChart,
+  EffectScatterChart,
+  LineChart,
+  BarChart,
+} from "echarts/charts";
 import {
   TooltipComponent,
-  VisualMapComponent,
+  GeoComponent,
   GridComponent,
   LegendComponent,
 } from "echarts/components";
@@ -19,12 +24,14 @@ import { CanvasRenderer } from "echarts/renderers";
 import { feature } from "topojson-client";
 import atlas from "world-atlas/countries-110m.json";
 import codes from "./country-codes.json";
+import { countryPoints, serverPoint, splitDateLine } from "./map-flow";
 echarts.use([
-  MapChart,
+  LinesChart,
+  EffectScatterChart,
   LineChart,
   BarChart,
   TooltipComponent,
-  VisualMapComponent,
+  GeoComponent,
   GridComponent,
   LegendComponent,
   CanvasRenderer,
@@ -33,6 +40,9 @@ const world = feature(atlas, atlas.objects.countries);
 world.features.forEach((f) => {
   f.properties.name = codes[String(f.id).padStart(3, "0")] || `X${f.id}`;
 });
+world.features = world.features.filter((f) => f.properties.name !== "AQ");
+const originPoints = countryPoints(world.features);
+splitDateLine(world.features);
 echarts.registerMap("world", world);
 const names = new Intl.DisplayNames(["zh-CN"], { type: "region" });
 const countryName = (code) => {
@@ -298,59 +308,140 @@ function renderCharts() {
   trendChart ||= echarts.init(trendEl.value);
   serviceChart ||= echarts.init(serviceEl.value);
   const entries = mapCountries.value
-    .filter((c) => c.country_code !== "ZZ")
-    .map((c) => ({
+    .filter(
+      (c) => originPoints[c.country_code] && Number(c[mapMetric.value]) > 0,
+    )
+    .map((c, index) => ({
       name: c.country_code,
-      value: Number(c[mapMetric.value] || 0),
+      count: Number(c[mapMetric.value] || 0),
+      value: [...originPoints[c.country_code], Number(c[mapMetric.value] || 0)],
+      label: { show: index < 7 },
     }));
+  const flowColor = ["current_bans", "blocked"].includes(mapMetric.value)
+    ? "#ed7939"
+    : "#078dbf";
+  const reducedMotion = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
+  const routes = entries.map((entry) => ({
+    name: entry.name,
+    count: entry.count,
+    coords: [entry.value.slice(0, 2), serverPoint],
+    lineStyle: { width: Math.min(4, 1 + Math.log10(1 + entry.count)) },
+  }));
   mapChart.setOption(
     {
-      backgroundColor: "transparent",
+      backgroundColor: "#d3d5d9",
       tooltip: {
         trigger: "item",
         formatter: (p) =>
-          `${countryName(p.name)}<br/>${metricLabels[mapMetric.value]}：${digits(p.value)}`,
+          p.data?.server
+            ? "云主机 · 北京<br/>所有来源连线汇聚于此"
+            : `${countryName(p.name)}${p.data?.count ? `<br/>${metricLabels[mapMetric.value]}：${digits(p.data.count)}<br/>国家代表坐标，非 IP 精确位置` : ""}`,
       },
-      visualMap: {
-        min: 0,
-        max: Math.max(1, ...entries.map((c) => c.value)),
-        left: 18,
-        bottom: 12,
-        text: ["高", "低"],
-        textStyle: { color: "#8b9aad" },
-        inRange: { color: ["#223b4a", "#287678", "#6be5cb"] },
-        calculable: true,
+      geo: {
+        map: "world",
+        roam: true,
+        boundingCoords: [
+          [-180, 85],
+          [180, -60],
+        ],
+        left: 15,
+        right: 15,
+        top: 30,
+        bottom: 30,
+        scaleLimit: { min: 1, max: 8 },
+        itemStyle: {
+          areaColor: "#ececed",
+          borderColor: "#c7c9cc",
+          borderWidth: 0.6,
+        },
+        emphasis: {
+          itemStyle: { areaColor: "#d9e9ed" },
+          label: { show: false },
+        },
+        select: { itemStyle: { areaColor: "#c5e3ed" } },
       },
       series: [
         {
-          type: "map",
-          map: "world",
-          roam: true,
-          zoom: 1.15,
-          layoutCenter: ["50%", "45%"],
-          layoutSize: "110%",
-          itemStyle: {
-            areaColor: "#1d2b38",
-            borderColor: "#425263",
-            borderWidth: 0.5,
+          type: "lines",
+          coordinateSystem: "geo",
+          z: 2,
+          lineStyle: {
+            color: "#078dbf",
+            opacity: 0.12,
+            width: 7,
+            curveness: 0.22,
           },
-          emphasis: {
-            itemStyle: { areaColor: "#e9bc6a" },
-            label: {
-              show: true,
-              formatter: (p) => countryName(p.name),
-              color: "#10202d",
-            },
+          silent: true,
+          data: routes.map((r) => ({
+            ...r,
+            lineStyle: { width: r.lineStyle.width + 6 },
+          })),
+        },
+        {
+          type: "lines",
+          coordinateSystem: "geo",
+          z: 3,
+          effect: {
+            show: !reducedMotion,
+            period: 6,
+            trailLength: 0,
+            symbol: "circle",
+            symbolSize: 4,
+            color: flowColor,
           },
-          select: { itemStyle: { areaColor: "#e9bc6a" } },
+          lineStyle: { color: flowColor, opacity: 0.75, curveness: 0.22 },
+          emphasis: { lineStyle: { opacity: 1, width: 5 } },
+          data: routes,
+        },
+        {
+          type: "effectScatter",
+          coordinateSystem: "geo",
+          z: 4,
+          showEffectOn: "emphasis",
+          rippleEffect: { scale: 2.5, brushType: "stroke" },
+          symbolSize: (v) => Math.min(18, 6 + Math.log10(1 + v[2]) * 3),
+          itemStyle: { color: "#078dbf", borderColor: "#fff", borderWidth: 1 },
+          label: {
+            position: "right",
+            formatter: (p) => countryName(p.name),
+            color: "#263448",
+            fontWeight: 600,
+            textBorderColor: "#f7f7f7",
+            textBorderWidth: 3,
+          },
+          labelLayout: { hideOverlap: true },
+          emphasis: { label: { show: true } },
           data: entries,
+        },
+        {
+          type: "effectScatter",
+          coordinateSystem: "geo",
+          z: 5,
+          showEffectOn: reducedMotion ? "emphasis" : "render",
+          rippleEffect: { scale: 3, brushType: "stroke", period: 4 },
+          symbolSize: 17,
+          itemStyle: { color: "#078dbf", borderColor: "#fff", borderWidth: 2 },
+          label: {
+            show: true,
+            position: "top",
+            formatter: "云主机 · 北京",
+            color: "#263448",
+            fontWeight: 700,
+            textBorderColor: "#f7f7f7",
+            textBorderWidth: 3,
+          },
+          data: [{ name: "server", server: true, value: serverPoint }],
         },
       ],
     },
     true,
   );
   mapChart.off("click");
-  mapChart.on("click", (p) => filterCountry(p.name));
+  mapChart.on("click", (p) => {
+    if (originPoints[p.name]) filterCountry(p.name);
+  });
   const data = overview.value.trend;
   const colors = ["#6be5cb", "#f5b46a"];
   const grid = { left: 45, right: 15, top: 36, bottom: 26 };
@@ -678,7 +769,16 @@ onBeforeUnmount(() => {
             }}
           </div>
           <div class="map-note">
-            地理归属为 IP 查询结果，不代表访问者实际位置
+            <span
+              :class="[
+                'flow-key',
+                ['current_bans', 'blocked'].includes(mapMetric)
+                  ? 'blocked'
+                  : '',
+              ]"
+            ></span>
+            {{ metricLabels[mapMetric] }} · 国家代表坐标 → 北京云主机 ·
+            连线为汇总示意，非实时网络流量
           </div>
         </section>
         <aside>

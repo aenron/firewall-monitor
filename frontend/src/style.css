@@ -273,7 +273,9 @@ main {
   position: relative;
 }
 .map {
-  height: 390px;
+  height: 440px;
+  border-radius: 10px;
+  overflow: hidden;
 }
 .map-empty {
   position: absolute;
@@ -287,11 +289,20 @@ main {
   pointer-events: none;
 }
 .map-note {
-  position: absolute;
-  bottom: 12px;
-  right: 16px;
+  padding: 12px;
   font-size: 10px;
   color: #8192a5;
+}
+.flow-key {
+  display: inline-block;
+  width: 22px;
+  height: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: #078dbf;
+}
+.flow-key.blocked {
+  background: #ed7939;
 }
 .rankings {
   padding-bottom: 12px;
