@@ -4,9 +4,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Shanghai
 
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata \
-    && rm -rf /var/lib/apt/lists/*
+# The official Debian-based Python image includes timezone data.
+RUN test -f /usr/share/zoneinfo/Asia/Shanghai
 
 WORKDIR /app
 COPY requirements.txt ./
