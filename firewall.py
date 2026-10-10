@@ -331,8 +331,11 @@ class Firewall:
         while not self.stop_heartbeat.wait(15):
             try:
                 # A live stream can be quiet. Container existence/running is checked independently.
-                with docker.from_env(timeout=self.settings.timeout) as client:
+                client = docker.from_env(timeout=self.settings.timeout)
+                try:
                     running = client.containers.get(self.settings.container).status == "running"
+                finally:
+                    client.close()
                 self.store.health("monitor", self.monitor_ok and running, "frps 日志监听" if running else "frps 未运行")
             except Exception as exc:
                 try:
