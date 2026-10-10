@@ -1,0 +1,23 @@
+[Unit]
+Description=Firewall Monitor restricted fail2ban executor
+After=network-online.target fail2ban.service
+Wants=network-online.target
+Requires=fail2ban.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/project/firewall-monitor
+EnvironmentFile=/root/project/firewall-monitor/firewall.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/root/project/firewall-monitor/.agent-venv/bin/python /root/project/firewall-monitor/host_agent.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

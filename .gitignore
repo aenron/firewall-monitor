@@ -12,3 +12,10 @@ log/
 __pycache__/
 *.pyc
 .venv/
+.agent-venv/
+frontend/node_modules/
+frontend/dist/
+.pytest_cache/
+.coverage
+.tmp/
+!dashboard.env.example

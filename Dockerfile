@@ -11,7 +11,7 @@ WORKDIR /app
 COPY requirements.txt ./
 ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" -r requirements.txt
-COPY firewall.py ./
+COPY firewall.py storage.py ./
 RUN mkdir -p /app/log /banlogs
 
 CMD ["python", "firewall.py"]

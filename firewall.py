@@ -5,6 +5,8 @@ import os
 import re
 import sys
 import time
+import hashlib
+import threading
 from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -15,6 +17,7 @@ import docker
 import mysql.connector
 import requests
 from loguru import logger
+from storage import Store, utcnow
 
 SERVICE_PATTERN = re.compile(r"\[[^\[\]]*\]\s*\[[^\[\]]*\]\s*\[[^\[\]]*\]\s*\[([^\[\]]+)\]")
 CLIENT_PATTERN = re.compile(r"\b(?:new )?user connection\s*\[(.+)\]\s*$", re.I)
@@ -126,6 +129,9 @@ class Firewall:
         self.since = int(time.time())
         self.seen = OrderedDict()
         self.geo_cache = OrderedDict()
+        self.store = Store(settings.mysql)
+        self.stop_heartbeat = threading.Event()
+        self.monitor_ok = False
 
     @contextmanager
     def database(self):
@@ -162,6 +168,7 @@ class Firewall:
             if cursor.fetchone() is None:
                 cursor.execute("ALTER TABLE ip_info ADD COLUMN geo_updated_at DATETIME NULL")
             connection.commit()
+        self.store.migrate()
 
     def lookup(self, ip, cursor):
         cached = self.geo_cache.get(ip)
@@ -213,14 +220,6 @@ class Firewall:
                 counter=COALESCE(counter, 0)+1, last_seen=CURRENT_TIMESTAMP
         """, (ip, *fields, *fields))
 
-    def request_ban(self, ip, name, info):
-        # 保留既有 fail2ban 日志格式。写入成功不等于 fail2ban 已完成封禁。
-        location = "-".join(info[key] for key in ("country", "region", "city"))
-        line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} <BAN> {ip} from {location} access {name}"
-        with self.settings.ban_log.open("a", encoding="utf-8") as handle:
-            handle.write(line.replace("\r", " ").replace("\n", " ") + "\n")
-        logger.warning("已提交 fail2ban 封禁请求: {} 服务={} 归属地={}", ip, name, location)
-
     def notify(self, ip, name, info, blocked):
         if self.settings.push_mode == "no" or name in self.settings.exempt_services:
             return
@@ -246,27 +245,54 @@ class Firewall:
             # 请求异常可能包含带令牌的 URL，不输出异常详情。
             logger.warning("通知发送失败，不影响后续日志处理")
 
-    def process(self, ip, name):
+    def process(self, ip, name, event_key=None, occurred_at=None, container_id=None, since_second=None):
         if not ipaddress.ip_address(ip).is_global:
             logger.debug("跳过非公网地址 {}", ip)
             return
-        with self.database() as (connection, cursor):
-            info, refreshed = self.lookup(ip, cursor)
-            blocked = should_block(info, name, self.settings)
-            if blocked:
-                self.request_ban(ip, name, info)
-            self.save_access(cursor, ip, name, info, blocked)
-            connection.commit()
-        logger.info("{} 服务={} 城市={} 策略={}", ip, name, info["city"],
-                    "请求封禁" if blocked else "放行")
+        event_key = event_key or hashlib.sha256(f"{ip}:{name}:{time.time_ns()}".encode()).hexdigest()
+        occurred_at = occurred_at or utcnow()
+        with self.store.transaction() as (_, cursor):
+            Store.lock_ip(cursor, ip)
+            cursor.execute("SELECT id FROM fm_events WHERE event_key=%s", (event_key,))
+            if cursor.fetchone():
+                return
+            override = Store.override(cursor, ip)
+            refreshed = False
+            try:
+                info, refreshed = self.lookup(ip, cursor)
+                blocked = should_block(info, name, self.settings)
+                decision, reason = ("block", "归属地和服务规则") if blocked else ("allow", "归属地和服务规则")
+            except (requests.RequestException, ValueError):
+                info, blocked, decision, reason = {}, False, "unknown", "归属地查询失败，未自动封禁"
+            if override:
+                blocked = override["mode"] == "block"
+                decision, reason = override["mode"], "人工策略：" + override["reason"]
+            if Store.record(cursor,event_key,occurred_at,ip,name,info,decision,reason):
+                if info:
+                    self.save_access(cursor, ip, name, info, blocked)
+                if blocked:
+                    cursor.execute("SELECT id FROM fm_commands WHERE ip=%s AND status IN ('pending','running') LIMIT 1", (ip,))
+                    if cursor.fetchone() is None:
+                        cursor.execute("""INSERT INTO fm_commands (ip,action,version,created_at,updated_at)
+                            VALUES (%s,%s,%s,UTC_TIMESTAMP(),UTC_TIMESTAMP())""",
+                            (ip,"block" if override else "auto",override["version"] if override else None))
+            if container_id:
+                cursor.execute("""INSERT INTO fm_cursors VALUES (%s,%s,UTC_TIMESTAMP())
+                    ON DUPLICATE KEY UPDATE since_second=GREATEST(since_second,VALUES(since_second)),updated_at=UTC_TIMESTAMP()""",
+                    (container_id,since_second))
+        logger.info("{} 服务={} 城市={} 策略={}", ip, name, info.get("city", "未知"), decision)
         # 保持原行为：同一 IP 只在首次或归属地刷新后通知，避免每次访问推送。
-        if refreshed:
+        if refreshed and info:
             self.notify(ip, name, info, blocked)
 
     def monitor(self):
         if self.client is None:
             self.client = docker.from_env(timeout=self.settings.timeout)
         container = self.client.containers.get(self.settings.container)
+        saved = self.store.query("SELECT since_second FROM fm_cursors WHERE container_id=%s",(container.id,))
+        if saved:
+            self.since = saved[0]["since_second"]
+        self.monitor_ok = True
         stream = container.logs(stream=True, follow=True, since=self.since, timestamps=True)
         try:
             for chunk in stream:
@@ -281,34 +307,54 @@ class Firewall:
                     except ValueError:
                         logger.warning("跳过无法解析 Docker 时间戳的日志")
                         continue
-                    self.since = max(self.since, int(moment.timestamp()))
                     if line in self.seen:
                         continue
                     event = parse_connection(message)
                     try:
                         if event:
-                            self.process(*event)
-                    except (requests.RequestException, mysql.connector.Error, OSError, ValueError) as exc:
-                        logger.warning("连接事件处理失败 IP={} 服务={} ({})，本次跳过，后续事件将重试",
+                            self.process(*event, event_key=hashlib.sha256((container.id + line).encode()).hexdigest(),
+                                occurred_at=moment.astimezone(timezone.utc).replace(tzinfo=None),
+                                container_id=container.id,since_second=int(moment.timestamp()))
+                    except (requests.RequestException, mysql.connector.Error, OSError, ValueError, RuntimeError) as exc:
+                        logger.warning("连接事件处理失败 IP={} 服务={} ({})，重连后回读该事件",
                                        event[0], event[1], type(exc).__name__)
-                        continue
+                        raise
+                    self.since = max(self.since, int(moment.timestamp()))
                     self.seen[line] = None
                     if len(self.seen) > 10000:
                         self.seen.popitem(last=False)
         finally:
+            self.monitor_ok = False
             stream.close()
+
+    def heartbeat(self):
+        while not self.stop_heartbeat.wait(15):
+            try:
+                # A live stream can be quiet. Container existence/running is checked independently.
+                with docker.from_env(timeout=self.settings.timeout) as client:
+                    running = client.containers.get(self.settings.container).status == "running"
+                self.store.health("monitor", self.monitor_ok and running, "frps 日志监听" if running else "frps 未运行")
+            except Exception as exc:
+                try:
+                    self.store.health("monitor", False, type(exc).__name__)
+                except Exception:
+                    pass
 
     def run(self):
         delay = self.settings.retry_delay
+        heartbeat_started = False
         try:
             while True:
                 started = time.monotonic()
                 try:
                     self.init_db()
+                    if not heartbeat_started:
+                        threading.Thread(target=self.heartbeat,daemon=True).start()
+                        heartbeat_started = True
                     logger.info("开始监控容器 {}", self.settings.container)
                     self.monitor()
                 except (docker.errors.DockerException, requests.RequestException,
-                        mysql.connector.Error, OSError, ValueError) as exc:
+                        mysql.connector.Error, OSError, ValueError, RuntimeError) as exc:
                     logger.warning("监控连接中断 ({})，{} 秒后重试", type(exc).__name__, delay)
                 if self.client is not None:
                     self.client.close()
@@ -318,6 +364,7 @@ class Firewall:
                 time.sleep(delay)
                 delay = min(delay * 2, max(60, self.settings.retry_delay))
         finally:
+            self.stop_heartbeat.set()
             self.session.close()
             if self.client is not None:
                 self.client.close()
