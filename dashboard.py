@@ -34,8 +34,8 @@ def create_app(store=None, config=None):
     username = cfg.get("DASHBOARD_ADMIN_USERNAME", "")
     password = cfg.get("DASHBOARD_ADMIN_PASSWORD", "")
     secret = cfg.get("DASHBOARD_SESSION_SECRET", "")
-    if not username or len(password) < 12 or len(secret) < 32 or password.startswith('replace-') or secret.startswith('replace-'):
-        raise ValueError("Configure admin username, password (12+ characters), and session secret (32+ characters)")
+    if not username or len(password) < 6 or len(secret) < 32 or password.startswith('replace-') or secret.startswith('replace-'):
+        raise ValueError("Configure admin username, password (6+ characters), and session secret (32+ characters)")
     lifetime = int(cfg.get("DASHBOARD_SESSION_HOURS", "8")) * 3600
     if not 60 <= lifetime <= 86400:
         raise ValueError("Session lifetime must be between 1 minute and 24 hours")

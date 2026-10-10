@@ -66,3 +66,11 @@ def test_country_and_ip_normalization():
     assert country_code('United Kingdom')=='GB'
     assert country_code('没有这个国家')=='ZZ'
     assert canonical_ip('2001:4860:4860:0:0:0:0:8888')=='2001:4860:4860::8888'
+
+
+def test_six_character_password_login():
+    client=TestClient(create_app(NoDatabase(),{**CONFIG,'DASHBOARD_ADMIN_USERNAME':'zmj','DASHBOARD_ADMIN_PASSWORD':'Ab3dE9'}))
+    response=client.post('/api/login',json={'username':'zmj','password':'Ab3dE9'})
+    assert response.status_code==200
+    assert response.json()['username']=='zmj'
+    client.close()
