@@ -1,0 +1,16 @@
+# Optional local builds for development; production uses compose.yaml alone.
+services:
+  firewall-monitor:
+    image: firewall-monitor:local
+    build:
+      context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+  dashboard:
+    image: firewall-monitor-dashboard:local
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}

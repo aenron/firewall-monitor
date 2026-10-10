@@ -55,19 +55,19 @@
 
    `%` 应根据实际网络收紧；API 不挂载 Docker socket 或 Fail2ban socket。执行器使用宿主机 root 身份访问 Fail2ban，但仅允许修改固定 `firewall-docker` jail；其他 jail 只采集。
 
-5. 构建并启动：
+5. 拉取 GitHub 构建的镜像并启动（不在云主机编译）：
 
    ```bash
-   # 构建源写入忽略的项目 .env：
-   # PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-   # NPM_REGISTRY=https://registry.npmmirror.com
-   docker compose build
-   docker compose up -d
+   git pull --ff-only
+   # 等待 GitHub Actions 的两个镜像发布完成；首次需将 GHCR 包设为 Public。
+   bash deploy/update.sh
    docker compose logs --tail=100
    systemctl status firewall-monitor-agent --no-pager
    ```
 
-   默认仅发布 `127.0.0.1:8080`。本机可通过 SSH 隧道访问：
+   `compose.yaml` 仅引用 GHCR 镜像，更新脚本先完成所有镜像拉取再切换服务。也可使用 `bash deploy/update.sh sha-完整提交号` 部署指定构建。宿主机执行器继续使用本地 Python 环境；若 `requirements-agent.txt` 发生变化，需要先更新该环境依赖。
+
+   当前主机的 `.env` 已配置 `DASHBOARD_BIND_ADDRESS=0.0.0.0` 和 `DASHBOARD_PORT=8088`，直接访问 `http://59.110.150.224:8088`。通用默认值仅发布 `127.0.0.1:8080`，可通过 SSH 隧道访问：
 
    ```powershell
    ssh -p 2022 -i C:\Users\magic\DOCUME~1\ssh\ali-bj.pem -L 8080:127.0.0.1:8080 root@59.110.150.224

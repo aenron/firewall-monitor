@@ -2,11 +2,7 @@ name: firewall-monitor
 
 services:
   firewall-monitor:
-    build:
-      context: .
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-    image: firewall-monitor:local
+    image: ${FIREWALL_IMAGE:-ghcr.io/aenron/firewall-monitor}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     init: true
     env_file:
@@ -45,13 +41,7 @@ services:
         max-file: "3"
 
   dashboard:
-    build:
-      context: .
-      dockerfile: Dockerfile.dashboard
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
-    image: firewall-monitor-dashboard:local
+    image: ${DASHBOARD_IMAGE:-ghcr.io/aenron/firewall-monitor-dashboard}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     init: true
     env_file:
