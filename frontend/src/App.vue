@@ -64,7 +64,7 @@ const tab = ref("ips"),
   page = ref(1);
 const customStart = ref(""),
   customEnd = ref(""),
-  mapMetric = ref("unique_ips"),
+  mapMetric = ref("current_bans"),
   rows = ref([]),
   total = ref(0);
 const selected = ref(null),
@@ -106,6 +106,31 @@ const labels = {
   observed_unban: "观测到解封",
 };
 const summary = computed(() => overview.value?.summary || {});
+const metricLabels = {
+  current_bans: "当前封禁 IP",
+  unique_ips: "来源 IP",
+  connections: "连接次数",
+  blocked: "封禁请求",
+};
+const mapCountries = computed(() =>
+  [
+    ...(mapMetric.value === "current_bans"
+      ? banFresh.value
+        ? overview.value?.ban_countries || []
+        : []
+      : overview.value?.countries || []),
+  ].sort(
+    (a, b) => Number(b[mapMetric.value] || 0) - Number(a[mapMetric.value] || 0),
+  ),
+);
+const countryOptions = computed(() => [
+  ...new Map(
+    [
+      ...(overview.value?.countries || []),
+      ...(overview.value?.ban_countries || []),
+    ].map((c) => [c.country_code, c]),
+  ).values(),
+]);
 const maxPage = computed(() => Math.max(1, Math.ceil(total.value / 25)));
 const policyLabel = computed(() => {
   const p = detail.value?.override[0];
@@ -272,7 +297,7 @@ function renderCharts() {
   mapChart ||= echarts.init(mapEl.value);
   trendChart ||= echarts.init(trendEl.value);
   serviceChart ||= echarts.init(serviceEl.value);
-  const entries = overview.value.countries
+  const entries = mapCountries.value
     .filter((c) => c.country_code !== "ZZ")
     .map((c) => ({
       name: c.country_code,
@@ -284,7 +309,7 @@ function renderCharts() {
       tooltip: {
         trigger: "item",
         formatter: (p) =>
-          `${countryName(p.name)}<br/>${{ unique_ips: "来源 IP", connections: "连接次数", blocked: "封禁请求" }[mapMetric.value]}：${digits(p.value)}`,
+          `${countryName(p.name)}<br/>${metricLabels[mapMetric.value]}：${digits(p.value)}`,
       },
       visualMap: {
         min: 0,
@@ -574,10 +599,7 @@ onBeforeUnmount(() => {
           </button></template
         ><select v-model="country" @change="apply">
           <option value="">全部国家 / 地区</option>
-          <option
-            v-for="c in overview?.countries || []"
-            :value="c.country_code"
-          >
+          <option v-for="c in countryOptions" :value="c.country_code">
             {{ countryName(c.country_code) }}
           </option></select
         ><input
@@ -629,18 +651,31 @@ onBeforeUnmount(() => {
         <section class="panel map-panel">
           <div class="panel-heading">
             <div>
-              <h2>全球访问来源</h2>
-              <small>点击国家联动筛选 · 滚轮缩放 / 拖动地图</small>
+              <h2>
+                {{
+                  mapMetric === "current_bans" ? "全球封禁来源" : "全球访问来源"
+                }}
+              </h2>
+              <small>{{
+                mapMetric === "current_bans"
+                  ? "当前 firewall-docker 快照 · 不受时间筛选影响"
+                  : "点击国家联动筛选 · 滚轮缩放 / 拖动地图"
+              }}</small>
             </div>
             <select v-model="mapMetric">
+              <option value="current_bans">当前封禁 IP 数</option>
               <option value="unique_ips">来源 IP 数</option>
               <option value="connections">连接次数</option>
               <option value="blocked">封禁请求数</option>
             </select>
           </div>
           <div ref="mapEl" class="map"></div>
-          <div v-if="!overview?.countries?.length" class="map-empty">
-            暂无已记录事件，等待新连接
+          <div v-if="!mapCountries.length" class="map-empty">
+            {{
+              mapMetric === "current_bans"
+                ? "暂无已确认的封禁来源或采集尚未就绪"
+                : "暂无已记录事件，等待新连接"
+            }}
           </div>
           <div class="map-note">
             地理归属为 IP 查询结果，不代表访问者实际位置
@@ -650,10 +685,10 @@ onBeforeUnmount(() => {
           <section class="panel rankings">
             <div class="panel-heading">
               <h2>来源国家排行</h2>
-              <small>连接次数</small>
+              <small>{{ metricLabels[mapMetric] }}</small>
             </div>
             <button
-              v-for="(c, i) in (overview?.countries || []).slice(0, 7)"
+              v-for="(c, i) in mapCountries.slice(0, 7)"
               class="rank-row"
               @click="filterCountry(c.country_code)"
             >
@@ -668,20 +703,15 @@ onBeforeUnmount(() => {
                     width:
                       Math.max(
                         2,
-                        (Number(c.connections) /
-                          Math.max(
-                            1,
-                            Number(overview.countries[0].connections),
-                          )) *
+                        (Number(c[mapMetric]) /
+                          Math.max(1, Number(mapCountries[0][mapMetric]))) *
                           100,
                       ) + '%',
                   }"
                 ></span></span
-              ><b>{{ digits(c.connections) }}</b>
+              ><b>{{ digits(c[mapMetric]) }}</b>
             </button>
-            <p v-if="!overview?.countries?.length" class="empty">
-              暂无来源数据
-            </p>
+            <p v-if="!mapCountries.length" class="empty">暂无来源数据</p>
           </section>
           <section class="panel health">
             <h2>服务状态</h2>
@@ -942,9 +972,7 @@ onBeforeUnmount(() => {
           </p>
           <small
             >历史累计连接
-            {{
-              digits(detail.profile[0]?.legacy_counter)
-            }}
+            {{ digits(detail.profile[0]?.legacy_counter) }}
             次（迁移前数据）</small
           >
         </div>

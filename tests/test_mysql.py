@@ -69,6 +69,8 @@ def test_event_dedup_stats_cursor_and_automatic_ban(system):
     data=client.get('/api/overview').json()
     assert data['summary']['unique_ips']==1
     assert data['countries'][0]['country_code']=='US'
+    assert data['ban_countries'][0]['country_code']=='US'
+    assert data['ban_countries'][0]['current_bans']==1
     assert sum(int(row['connections']) for row in data['trend'])==1
     for row in data['trend']:
         datetime.fromisoformat(row['hour'].replace('Z','+00:00'))

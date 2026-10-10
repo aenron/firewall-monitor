@@ -195,7 +195,13 @@ def create_app(store=None, config=None):
             trend.append(by_hour.get(label,{'hour':label,'connections':0,'blocked':0}))
             hour+=timedelta(hours=1)
         summary["current_bans"] = db.query("SELECT COUNT(DISTINCT ip) n FROM fm_ban_current WHERE jail='firewall-docker'")[0]["n"]
+        ban_countries=db.query("""SELECT COALESCE(p.country_code,'ZZ') country_code,
+            MAX(p.country) country,COUNT(DISTINCT b.ip) current_bans
+            FROM fm_ban_current b LEFT JOIN fm_profiles p ON p.ip=b.ip
+            WHERE b.jail='firewall-docker' GROUP BY COALESCE(p.country_code,'ZZ')
+            ORDER BY current_bans DESC""")
         return {"summary":summary,"countries":countries,"services":services,"trend":trend,
+                "ban_countries":ban_countries,
                 "health":db.query("SELECT * FROM fm_health"),"generated_at":utcnow(),
                 "demo":cfg.get("DASHBOARD_DEMO_MODE","false").lower()=="true"}
 
